@@ -1,0 +1,181 @@
+---
+title: "Final BSA Application"
+output:
+  pdf_document: default
+  html_document: default
+date: "2025-10-27"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Load packages
+library(shiny)
+library(tidyverse)
+library(fmsb)
+library(scales)
+library(stringr)
+
+# Load dataset
+data <- read.csv("BSA_Application_Dataset_25.csv")
+
+# Identify usable metrics automatically
+exclude_cols <- c("team_id", "team", "team_color", "team_logo")
+
+numeric_metrics <- data %>%
+  select(where(is.numeric), -any_of(exclude_cols)) %>%
+  colnames()
+
+# Normalize numeric data (0–1) 
+scaled <- data %>%
+  select(any_of(c("team", "team_color", numeric_metrics))) %>%
+  mutate(across(all_of(numeric_metrics), ~ (. - min(.)) / (max(.) - min(.)), .names = "{.col}"))
+
+# Clean variable name function
+clean_label <- function(x) {
+  x %>%
+    str_remove("^offensive_avg_") %>%
+    str_remove("^defensive_avg_") %>%
+    str_replace_all("_", " ") %>%
+    str_to_title()
+}
+
+# Create named vector: names (display) = cleaned labels, values = original variable names
+display_labels <- setNames(numeric_metrics, clean_label(numeric_metrics))
+
+# UI
+ui <- fluidPage(
+  titlePanel("Big 10 Women's Basketball Multi-Team Radar Chart Dashboard"),
+  
+  sidebarLayout(
+    sidebarPanel(
+      helpText("All statistics have been normalized to a 0-1 range using min-max scaling for presentational and comparison purposes."),
+      
+      helpText("Select one or more teams and any available metrics to include:"),
+      
+      
+      selectInput(
+        "teams", "Teams:",
+        choices = scaled$team,
+        multiple = TRUE,
+        selected = head(scaled$team, 2)
+      ),
+      
+      radioButtons(
+        "chart_type", "Chart Type:",
+        choices = c("Single Radar Chart" = "single",
+                    "Radar Chart per Team" = "multiple"),
+        selected = "single"
+      ),
+      
+      checkboxGroupInput(
+        "stats", "Select Stats:",
+        choices = display_labels,
+        selected = head(numeric_metrics, 6)
+      ),
+      
+      width = 3
+    ),
+    
+    mainPanel(
+      plotOutput("radarPlot", height = "650px")
+    )
+  )
+)
+
+
+# Server
+server <- function(input, output, session) {
+  
+  output$radarPlot <- renderPlot({
+    req(input$teams)
+    req(input$stats)
+    
+    selected <- scaled %>%
+      filter(team %in% input$teams) %>%
+      select(team, team_color, all_of(input$stats))
+    
+    # Compute max/min for consistent scaling
+    max_row <- rep(1, length(input$stats))
+    min_row <- rep(0, length(input$stats))
+    
+    # Clean variable names for radar chart display
+    clean_labels <- clean_label(input$stats)
+    
+    if (input$chart_type == "single") {
+      # Single radar chart
+      radar_data <- rbind(max_row, min_row, selected[, input$stats])
+      rownames(radar_data) <- c("Max", "Min", selected$team)
+      
+      team_colors <- paste0("#", selected$team_color)
+      
+      radarchart(
+        radar_data,
+        axistype = 1,
+        pcol = team_colors,
+        pfcol = alpha(team_colors, 0.4),
+        plwd = 2,
+        plty = 1,
+        cglcol = "grey70",
+        cglty = 1,
+        caxislabels = seq(0, 1, 0.2),
+        seg = 5,
+        cglwd = 0.8,
+        vlcex = 0.9,
+        vlabels = clean_labels,
+        title = paste("Radar Chart -", length(input$stats), "Metrics")
+      )
+      
+      # Updated legend with filled squares
+      legend(
+        "bottomright",
+        legend = selected$team,
+        col = team_colors,
+        pt.bg = alpha(team_colors, 0.7),  # fill color
+        pch = 15,                        # filled square
+        bty = "n",
+        cex = 0.9
+      )
+      
+    } else {
+      # Multiple radar charts
+      n <- nrow(selected)
+      ncol <- ceiling(sqrt(n))
+      nrow_plot <- ceiling(n / ncol)
+      par(mfrow = c(nrow_plot, ncol), mar = c(1, 1, 2, 1))
+      
+      for (i in 1:n) {
+        radar_data <- rbind(max_row, min_row, selected[i, input$stats])
+        rownames(radar_data) <- c("Max", "Min", selected$team[i])
+        team_color <- paste0("#", selected$team_color[i])
+        
+        radarchart(
+          radar_data,
+          axistype = 1,
+          pcol = team_color,
+          pfcol = alpha(team_color, 0.4),
+          plwd = 2,
+          plty = 1,
+          cglcol = "grey70",
+          cglty = 1,
+          caxislabels = seq(0, 1, 0.2),
+          seg = 5,
+          cglwd = 0.8,
+          vlcex = 0.9,
+          vlabels = clean_labels,
+          title = selected$team[i]
+        )
+      }
+      par(mfrow = c(1, 1)) # Reset
+    }
+  })
+}
+
+# Run App
+shinyApp(ui, server)
+
+```
+
+
